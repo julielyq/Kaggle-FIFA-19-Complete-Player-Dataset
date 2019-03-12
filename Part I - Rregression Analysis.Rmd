@@ -1,0 +1,334 @@
+---
+title: "Big Data II-Project 2"
+author: "Data Incubator"
+date: "3/5/2019"
+output: 
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set()
+```
+
+## Part 0. Data Wrangling process for the newly chosen FIFA dataset  
+
+1. Dataset includes lastest edition FIFA 2019 players attributes like Age, Nationality, Overall, Potential, Club, Value, Wage, Preferred Foot, International Reputation, Weak Foot, Skill Moves, Work Rate, Position, Height, Weight, score for each position, Crossing, Finishing, Heading, Accuracy, and so on.  
+
+2. Problems solved during data wrangling: ununified units for currency-related columnns; missing values; mismatched data in need of format converting; detecting zero value in a variable, redundant variable deleting, etc.  
+
+## Part 1. Descriptive Statistics  
+```{r, warning=FALSE}
+#load the data set
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(DT)
+library(knitr)
+library(grid)
+library(gridExtra)
+library(corrplot)
+library(methods)
+library(Matrix)
+library(ggthemes)
+library(psych)
+library(forcats)
+library(plotly)
+
+fifa <-read.csv("FIFA19_3.7_original.csv")
+
+#convert character variables to factor 
+fifa$Nationality = factor(fifa$Nationality)
+fifa$Preferred.Foot = factor(fifa$Preferred.Foot)
+fifa$Work.Rate = factor(fifa$Work.Rate)
+fifa$Body.Type = factor(fifa$Body.Type)
+fifa$Position = factor(fifa$Position)
+fifa$Real.Face = factor(fifa$Real.Face)
+fifa$Club = factor(fifa$Club)
+
+
+#Checking NA values
+sum(is.na(fifa))
+
+#select relevant and important variables for descriptive statistics
+fifaInfo <- select(fifa,Age, Overall, Potential, Wage, International.Reputation, Release.Clause, Nationality, Club, Work.Rate, Position)
+fifaStat <- select(fifa, Age, Overall, Potential, Wage, International.Reputation, Release.Clause)
+
+str(fifa)
+
+#  use options() to ensure numbers are not displayed in scientific notation.
+options(scipen = 999)
+```
+
+###1. Show descriptive statistics for relevant and important variables.  
+
+* the minimum, maximum, and average (mean, median, mode) and standard deviation /
+variance of important variables.
+
+```{r}
+#summary the dataset and get mean,median,25th and 75th quartiles,min,max for numeric variables
+#and counts for most frequent values in factor variables
+#summary(fifaInfo)
+
+#using the descriptive stat tool in the psych package
+describe(fifaInfo, na.rm = TRUE, interp=FALSE,skew = FALSE, ranges = TRUE,trim=.1,
+type=3,check=TRUE,fast=TRUE,quant=NULL,IQR=FALSE)
+ClubStat <- describeBy(fifaInfo, fifaInfo$Club)
+
+#Descriptive statistics for the top 2-4 clubs on FIFA 2019 ranking
+ClubStat["Real Madrid"]
+ClubStat["FC Bayern München"]
+ClubStat["FC Barcelona"]
+
+```
+
+1. We used both the built-in summary() function and the describe() function in the Psych package. The describe function can show all the descriptive statistics asked.  
+
+2. Besides describing the overall statistics of target variables, we also compared the descriptive statistics of the FIFA top 3 clubs on March 8 ("Real Madrid","FC Bayern München","FC Barcelona"). We can tell that all three clubs have lower-than-average age, and higher Overall and Potential scores, average wage and International Reputation than the average. Therefore, we assume that there will be some linear and curvilinear relationships in the data. As there are a lot of columns showing scores of a player for different positions and for different physical and mental capabilities. As there are overall score, potential score and detailed scores, we doubt that there may be redundancy and many variables will be take out while building the predictive model, so we first looked at several variables that we think are relevant and important and show how these variables can contribute to the market value of a player (visualized by clubs).  
+
+
+* box-and-whisker plots for relevant and important variables.  
+
+Going further by grouping observations into different clubs, we made box plots for the top 10 clubs on some important variables and reordered the plots by medians to show rankings of the top 10 clubs in different aspects. For example, Juventus has the highest overall score while FC Barcelona has the highest potential score. Juventus is the best in value, wage and international reputation while FC Barcelona has the highest in released clause. The difference of these rankings with the Mar 8 club rankings may come from the fact that the FIFA dataset we use in this project has not been updated to include data till Mar 8 2019.  
+
+```{r}
+# Top 10 clubs on Mar 8. source: https://www.footballseeding.com/club-ranking/a2018-2019/
+Top10 <- c("Real Madrid","FC Bayern München","FC Barcelona","Atlético Madrid","Juventus","Sevilla FC","Paris Saint-Germain","Manchester City","FC Porto","Arsenal")
+Top10Club <- filter(fifa,Club %in% Top10)
+# Top 3 clubs on Mar 8.
+Top3 <- c("Real Madrid","FC Bayern München","FC Barcelona")
+Top3Club <- filter(fifa,Club %in% Top3)
+
+bp1 <- Top10Club %>%
+  mutate(Club = fct_reorder(Club, desc(Overall))) %>%
+  ggplot(aes(Club, y=Overall))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+bp2 <- Top10Club %>%
+  mutate(Club = fct_reorder(Club, desc(Potential))) %>%
+  ggplot(aes(Club, y=Potential))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+bp3 <- Top10Club %>%
+   mutate(Club = fct_reorder(Club, desc(Value))) %>%
+  ggplot(aes(Club, y=Value))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+bp4 <- Top10Club %>%
+   mutate(Club = fct_reorder(Club, desc(Wage))) %>%
+  ggplot(aes(Club, y=Wage))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+bp5 <- Top10Club %>%
+  mutate(Club = fct_reorder(Club, desc(Release.Clause))) %>%
+  ggplot(aes(Club, y=Release.Clause))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+bp6 <- Top10Club %>%
+  mutate(Club = fct_reorder(Club, desc(International.Reputation))) %>%
+  ggplot(aes(Club, y=International.Reputation))+
+  geom_boxplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(bp1,bp2)
+grid.arrange(bp3,bp4,bp5,bp6)
+#subplot(bp3,bp4,bp5,bp6)
+
+
+bp7 <- Top10Club %>%
+  mutate(Club = fct_reorder(Club, desc(Value))) %>%
+  ggplot(aes(x=Club, y=Value))+
+  geom_boxplot(aes(fill = Preferred.Foot),position = position_dodge(0.9)) +
+  scale_fill_manual(values = c("#999999", "#E69F00"))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+bp7
+
+```
+
+
+###2. Create a scatterplot among the variables to find potentially linear or curvilinear relationships. That should help you identify both a target variable and candidate predictor variables.
+
+We tested the relationship between value (market value) and potential candidate predictor variables including age, Overall score, Potential score, International.Reputation and wage. The result shows some trends like value peaks at the age of 27-28, increases before this age anad decreases afterwards; higher international reputation contributes to higher value. And there's a clear curvilinear relationship between value and overall or potential score. However, it's hard to find a clear relationship between wage and market value, so more attention could be paid on this when doing multiple regression.  
+
+```{r}
+Age_sq <- mutate(fifa, Age_sq = Age^2)
+
+ScatterAge <- ggplot(data = fifa, aes(Age,Value)) + 
+  geom_point() +
+  labs(x='Age',y='Value',title='Value v.s. Age') + 
+  stat_smooth(method = "lm", 
+              formula = y ~ x + poly(x, 2) - 1)
+
+ScatterOverall <- ggplot(data = fifa, aes(Overall,Value)) + 
+  geom_point() +
+  labs(x='Overall',y='Value',title='Value v.s. Overall Score') + 
+  geom_smooth()
+
+ScatterPotential <- ggplot(data = fifa, aes(Potential,Value)) + 
+  geom_point() +
+  labs(x='Potential',y='Value',title='Value v.s. Potential Score') + 
+  geom_smooth()
+
+ScatterInternational.Reputation <- ggplot(data = fifa, aes(International.Reputation,Value)) + 
+  geom_point() +
+  labs(x='International.Reputation',y='Value',title='Value v.s. International Reputation') + 
+  geom_abline()
+
+
+grid.arrange(ScatterAge,ScatterOverall,ScatterPotential,ScatterInternational.Reputation)
+
+
+ScatterWage <- ggplot(data = fifa, aes(Wage,Value)) + 
+  geom_point() +
+  labs(x='Wage',y='Value',title='Value v.s. Wage') + 
+  geom_abline()
+ScatterWage_log <- ggplot(data = fifa, aes(log(Wage),Value)) + 
+  geom_point() +
+  labs(x='Wage_log',y='Value',title='Value v.s. Wage_log') + 
+  geom_abline()
+ScatterWage_sq <- ggplot(data = fifa, aes(Wage^2,Value)) + 
+  geom_point() +
+  labs(x='Wage^2',y='Value',title='Value v.s. Wage^2') + 
+  geom_abline()
+
+fifaWage_filtered <- filter(fifa, Wage < 20000)
+
+ScatterWage_filtered <- ggplot(data = fifaWage_filtered, aes(Wage,Value)) + 
+  geom_point() +
+  labs(x='Wage',y='Value',title='Value v.s. Wage_filtered') + 
+  geom_abline()
+
+grid.arrange(ScatterWage,ScatterWage_log,ScatterWage_sq,ScatterWage_filtered)
+
+ScatterWage_log_filtered <- ggplot(data = fifaWage_filtered, aes(log(Wage),Value)) + 
+  geom_point() +
+  labs(x='Wage_log',y='Value',title='Value v.s. Wage_log_filtered') + 
+  geom_abline()
+ScatterWage_sq_filtered <- ggplot(data = fifaWage_filtered, aes(Wage^2,Value)) + 
+  geom_point() +
+  labs(x='Wage^2',y='Value',title='Value v.s. Wage^2_filtered') + 
+  geom_abline()
+
+grid.arrange(ScatterWage_log_filtered,ScatterWage_sq_filtered)
+
+```
+
+###Choose a target variable and justify that choice.  
+
+Therefore, given the decriptive statistics analysis above, we decided to use Value as our target variable. This makes sense because considering the content and aim of FIFA data, we can probably tell that a popular use of the FIFA data is to predict the market value of players and clubs. And the descriptive analysis also shows that it's possible to predict the value using multiple candidate variables for multiple regression.
+
+
+## Part 2. Predictive Modeling: Multiple Regression
+```{r warning=FALSE}
+library(readr)
+library(forecast)
+library(tidyverse)
+library(car)
+# clean all variabes in current environment
+rm(list=ls())
+
+fifa <- read_csv("FIFA19_3.7_original.csv")
+fifa = fifa[,c(1:18)]
+```
+
+
+```{r Data Partition, warning=FALSE}
+fifa_position = fifa %>% filter(Position == 'ST') %>% filter(Value < 1000000) # filter high income("super star") famous players who have a total different distribution
+fifa_position = fifa_position[,-16] # delete position col
+
+set.seed(1)
+train.index = sample(seq(1,nrow(fifa_position)), floor(0.9*nrow(fifa_position))) # 90-10 partition
+selected.var <- c(1,3,4,6,7,9:11,13,14,16,17)
+
+train.t <- fifa_position[train.index, selected.var]
+valid.t <- fifa_position[-train.index, selected.var]
+
+# remove outliers individually
+train.t <- train.t[-c(253,889,417,609,680:687),]
+
+fifa.lm.train<- lm(Value ~ ., data = train.t)
+options(scipen = 999)
+summary(fifa.lm.train)
+vif(fifa.lm.train)
+par(mfrow=c(2,2))
+plot(fifa.lm.train)
+```
+
+
+
+```{r Validation Accuracy, warning=FALSE}
+fifa.lm.pred <- predict(fifa.lm.train, valid.t)
+options(scipen=999, digits = 0)
+some.residuals <- valid.t$Value[1:20] - fifa.lm.pred[1:20]
+data.frame("Predicted" = fifa.lm.pred[1:20], "Actual" = valid.t$Value[1:20],
+           "Residual" = some.residuals)
+
+options(scipen=999, digits = 3)
+accuracy(fifa.lm.pred, valid.t$Value)
+```
+
+
+```{r}
+hist(valid.t$Value - fifa.lm.pred, breaks = 14, xlab = "Residuals", main = "")
+```
+
+```{r forward selection}
+
+# create model with no predictors
+fifa.lm.null <- lm(Value ~ 1, data = valid.t)
+# use step() to run forward regression
+fifa.lm.step <- step(fifa.lm.null, scope=list(lower=fifa.lm.null, upper=fifa.lm.train), direction = "forward")
+summary(fifa.lm.step)
+
+fifa.lm.step.pred <- predict(fifa.lm.step, valid.t)
+options(scipen=999, digits = 0)
+accuracy(fifa.lm.step.pred, valid.t$Value)
+```
+
+```{r}
+hist(valid.t$Value - fifa.lm.step.pred, breaks = 14, xlab = "Residuals", main = "")
+```
+
+
+```{r Model Selection, warning=FALSE}
+# Add new col for model selection
+fifa_position$Age_sq = fifa_position$Age^2
+fifa_position$Wage_sq = fifa_position$Wage^2
+
+selected.var2 <- c(1,3,4,6,7,9:11,13,14,16,17,18,19)
+train.t_more <- fifa_position[train.index, selected.var2]
+valid.t_more <- fifa_position[-train.index, selected.var2]
+
+fifa.lm.2 = lm(Value ~ Overall + Age + Wage + Body.Type + Potential +Age_sq, data = train.t_more)
+fifa.lm.2.pred <- predict(fifa.lm.2, valid.t_more)
+summary(fifa.lm.2)
+accuracy(fifa.lm.2.pred, valid.t_more$Value)
+
+fifa.lm.3 = lm(Value ~ Overall + Age + Body.Type + Body.Type*Age + Potential + Wage , data = train.t_more)
+fifa.lm.3.pred <- predict(fifa.lm.3, valid.t_more)
+summary(fifa.lm.3)
+accuracy(fifa.lm.3.pred, valid.t_more$Value)
+
+fifa.lm.4 = lm(Value ~ Overall + Age + Body.Type + Potential + Wage + Wage_sq , data = train.t_more)
+summary(fifa.lm.4)
+fifa.lm.4.pred <- predict(fifa.lm.4, valid.t_more)
+accuracy(fifa.lm.4.pred, valid.t_more$Value)
+
+fifa.lm.5 = lm(Value ~ Overall + Age + Body.Type + Body.Type*Potential + Potential + Wage , data = train.t_more)
+summary(fifa.lm.5)
+fifa.lm.5.pred <- predict(fifa.lm.5, valid.t_more)
+accuracy(fifa.lm.5.pred, valid.t_more$Value)
+
+fifa.lm.6 = lm(Value ~ Overall + Age + Body.Type + Body.Type*Wage + Potential + Wage , data = train.t_more)
+summary(fifa.lm.6)
+fifa.lm.6.pred <- predict(fifa.lm.6, valid.t_more)
+accuracy(fifa.lm.6.pred, valid.t_more$Value)
+
+fifa.lm.7 = lm(Value ~ Overall + Age + Body.Type + Body.Type*Overall + Potential + Wage , data = train.t_more)
+summary(fifa.lm.7)
+fifa.lm.7.pred <- predict(fifa.lm.7, valid.t_more)
+accuracy(fifa.lm.7.pred, valid.t_more$Value)
+```  

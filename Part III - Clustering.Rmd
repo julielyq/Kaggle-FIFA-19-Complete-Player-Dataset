@@ -1,0 +1,316 @@
+---
+title: "Project4 Clustering"
+author: "Data Incubator"
+date: "4/2/2019"
+output:
+  word_document: default
+  html_document: default
+---
+```{r}
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(FNN)
+library(car)
+library(dplyr)
+library(MASS)
+library(ROSE)
+library(ROCR)
+library(data.table)
+library(ggplot2)
+library(psych)
+select <- dplyr::select
+
+
+fifa.df <- read.csv("FIFA19_3.7_original.csv")
+fifa.df <- fifa.df[ , c(16,19:48)]  # https://www.kaggle.com/manunew/classification-of-player-positions [input-18]
+
+# mutate new ST col for classification
+#fifa.df$ST = ifelse(fifa.df$Position == 'ST',1,0)
+#fifa.df$ST = factor(fifa.df$ST)
+fifa.df$Release.Clause = fifa.df$Release.Clause/228000000*100
+#summary(fifa.df$Release.Clause)
+
+# balance the dataset
+#fifa.df <- ovun.sample(ST ~ ., data = fifa.df, method = "both", p=0.5, N=4000, seed = 1)$data
+#table(fifa.df$ST)
+# scaled data after cleaning & manipulation
+levels(fifa.df$Position) = seq(1,26)
+fifa.df$Position = as.numeric(fifa.df$Position)
+fifa_sc = fifa.df[,] # no position
+options(scipen=999)
+
+
+fifa_categorized <- fifa_sc %>% mutate(Attacking=rowMeans(fifa_sc[,1:6]),
+Skill=rowMeans(fifa_sc[, 7:11]),
+Movement=rowMeans(fifa_sc[,12:16]),
+Power=rowMeans(fifa_sc[,17:21]),
+Mentality=rowMeans(fifa_sc[,22:27]),
+Defending=rowMeans(fifa_sc[,28:30]),
+ST=ifelse(fifa_sc$Position==26,1,0)) 
+
+
+fifa_c1 <- select(fifa_categorized,31:38)
+
+```
+
+```{r Descriptive Statistics}
+# descriptive statistics of the catogorized data
+describe(fifa_c1, na.rm = TRUE, interp = FALSE,skew = FALSE, ranges = TRUE,trim = .1,
+type = 3,check = TRUE,fast = TRUE,quant = NULL,IQR = FALSE)
+
+# scale the data
+fifa_c1.norm <- scale(fifa_c1)
+#Warning after scaling: Quick-TRANSfer stage steps exceeded maximum (= 737150)
+
+# descriptive statistics of the scaled data
+describe(fifa_c1.norm, na.rm = TRUE, interp = FALSE,skew = FALSE, ranges = TRUE,trim = .1,
+type = 3,check = TRUE,fast = TRUE,quant = NULL,IQR = FALSE)
+
+# boxplot
+#before scaling
+boxplot(fifa_c1$Attacking,fifa_c1$Skill,fifa_c1$Movement,fifa_c1$Power,fifa_c1$Mentality,fifa_c1$Defending, main = "Multiple Boxplots Before Scaling", at = c(1,2,3,4,5,6), names = c("Attacking","Skill","Movement","Power","Mentality","Defending"), col = "light blue", horizontal = F, notch = T)
+
+#after scaling
+boxplot(as.data.frame(fifa_c1.norm)$Attacking,as.data.frame(fifa_c1.norm)$Skill,as.data.frame(fifa_c1.norm)$Movement,as.data.frame(fifa_c1.norm)$Power,as.data.frame(fifa_c1.norm)$Mentality,as.data.frame(fifa_c1.norm)$Defending, main = "Multiple Boxplots After Scaling", at = c(1,2,3,4,5,6), names = c("Attacking","Skill","Movement","Power","Mentality","Defending"), col = "light blue", horizontal = F, notch = T)
+
+# scatter plots
+
+# subset the data to have better visualization
+sample_num <- sample(nrow(fifa_c1.norm), size = 4000, replace = T)
+sample_fifa <- fifa_c1.norm[sample_num,-8]
+
+# Attacking v.s. Defending
+spAttackingandDefending <- ggplot(data = as.data.frame(sample_fifa), aes(Attacking,Defending)) +
+  geom_point(alpha = 0.4, col = "blue") +
+  labs(x = 'Attacking',y = 'Defending',title = 'Attacking v.s. Defending')
+spAttackingandDefending
+
+# Skill v.s. Defending
+spSkillandDefending <- ggplot(data = as.data.frame(sample_fifa), aes(Skill, Defending)) + 
+  geom_point(alpha = 0.4, col = "blue") +
+  labs(x = 'Skill',y = 'Defending',title = 'Skill v.s. Defending')
+spSkillandDefending
+
+# Mentality v.s. Release.Clause
+spRelease.ClauseandDefending <- ggplot(data = as.data.frame(sample_fifa), aes(Release.Clause,Defending)) +
+  geom_point(alpha = 0.4, col = "blue") +
+  labs(x = 'Release.Clause',y = 'Defending',title = 'Mentality v.s. Defending')
+spRelease.ClauseandDefending
+```
+
+
+#1. K-means Clustering
+
+```{r K-means Clustering}
+#fifa_km <- kmeans(fifa_sc,centers=2,nstart=20)
+#print(fifa_km)
+# Compare clusters with actual position. Set k-means clusters as rows
+#table(fifa_km$cluster, fifa_sc$ST)
+
+# Initialise ratio_fifa 
+ratio_fifa <- rep(0, 15)
+
+# Finish the for-loop. 
+for (k in 1:15) {
+  
+  # Apply k-means to school_result: school_km
+  fifa_km <- kmeans(fifa_c1.norm[,-8], centers = k, nstart = 20)
+  
+  # Save the ratio between of WSS to TSS in kth element of ratio_ss
+  ratio_fifa[k] <- fifa_km$tot.withinss / fifa_km$totss
+  
+}
+
+# Make a scree plot with type "b" and xlab "k"
+plot(ratio_fifa, type = "b", xlab = "Number of Clusters", ylab = "Ratio of WSS to TSS")
+```
+
+```{r K-means Clustering: Profile Plot}
+# Set k equal to the number of clusters corresponding to the elbow location
+set.seed(1)
+k <- 6
+fifa_km <- kmeans(fifa_c1.norm[,-8], centers = k, nstart = 20)
+
+# the profile plot
+# plot an empty scatter plot
+plot(c(0), xaxt = 'n', ylab = "", type = "l", 
+     ylim = c(min(fifa_km$centers), max(fifa_km$centers)), xlim = c(0, 7))
+
+# label x-axes
+axis(1, at = c(1:7), labels = names(fifa_c1[,-8]))
+
+# plot centroids
+for (i in c(1:k))
+  lines(fifa_km$centers[i,], lty = i, lwd = 2, col = switch(i,  "red", 
+                                                       "green", "purple", 
+                                                        "orange","blue","yellow"))
+
+# name clusters
+text(x = 0.5, y = fifa_km$centers[, 1], labels = paste("Cluster", c(1:4)))
+
+dist(fifa_km$centers)
+#produce cluster labels (new variables) for all your observations using K-means
+#cat(fifa_km$cluster)
+
+aggregate(fifa_c1.norm[,-8], by=list(fifa_km$cluster), FUN =mean)
+fifa_c1.norm2 = data.frame(fifa_categorized, fifa_km$cluster)
+ggplot(fifa_c1.norm2, aes(x=fifa_km$cluster, fill=as.factor(fifa_km$cluster))) + geom_bar()
+```
+
+
+```{r}
+set.seed(1)
+train.index <- sample(c(1:dim(fifa_c1.norm2)[1]), dim(fifa_c1.norm2)[1]*0.6)
+train.df.km <- fifa_c1.norm2[train.index, ]
+valid.df.km <- fifa_c1.norm2[-train.index, ]
+
+logit.nokm <- glm(formula = ST ~ Crossing + Finishing + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause + 
+    Crossing:HeadingAccuracy + Finishing:HeadingAccuracy,
+    family = "binomial", data = train.df.km)
+summary(logit.nokm)
+logit.nokm.pred = predict(logit.nokm, valid.df.km[,-38], type = 'response')
+confusionMatrix(as.factor(ifelse(logit.nokm$fitted.values>0.5,1,0)), as.factor(train.df.km[,38])) #train
+confusionMatrix(as.factor(ifelse(logit.nokm.pred>0.5,1,0)), as.factor(valid.df.km[,38]))
+
+logit.km <- glm(formula = ST ~ Crossing + Finishing + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause + 
+    Crossing:HeadingAccuracy + Finishing:HeadingAccuracy + as.factor(fifa_km.cluster),
+    family = "binomial", data = train.df.km)
+summary(logit.km)
+
+logit.km.pred = predict(logit.km, valid.df.km[,-38], type = 'response')
+confusionMatrix(as.factor(ifelse(logit.km$fitted.values>0.5,1,0)), as.factor(train.df.km[,38])) #train
+confusionMatrix(as.factor(ifelse(logit.km.pred>0.5,1,0)), as.factor(valid.df.km[,38]))
+```
+
+#1. Hierarchical Clustering
+
+```{r Hierarchical Clustering}
+# Apply dist() to fifa_c1: fifa_dist
+fifa_dist <- dist(fifa_c1[,-8])
+
+par(mfrow=c(2,3))
+
+# Apply hclust() to fifa_dist: fifa_single
+fifa_single <- hclust(fifa_dist,method = "single")
+# Apply plot() on fifa_single to draw the dendrogram
+plot(fifa_single)
+
+# Apply hclust() to fifa_dist: fifa_complete
+fifa_complete <- hclust(fifa_dist,method = "complete")
+# Apply plot() on fifa_single to draw the dendrogram
+plot(fifa_complete)
+
+# Apply hclust() to fifa_dist: fifa_ward.D
+fifa_ward.D <- hclust(fifa_dist,method = "ward.D")
+# Apply plot() on fifa_ward.D to draw the dendrogram
+plot(fifa_ward.D)
+
+# Apply hclust() to fifa_dist: fifa_centroid
+fifa_centroid <- hclust(fifa_dist,method = "centroid")
+# Apply plot() on fifa_centroid to draw the dendrogram
+plot(fifa_centroid)
+
+# Apply hclust() to fifa_dist: fifa_median
+fifa_median <- hclust(fifa_dist,method = "median")
+# Apply plot() on fifa_median to draw the dendrogram
+plot(fifa_median)
+
+# Apply hclust() to fifa_dist: fifa_average
+fifa_average <- hclust(fifa_dist,method = "average")
+# Apply plot() on fifa_average to draw the dendrogram
+plot(fifa_average)
+
+# Set k and compare the histogram
+memb_single <- cutree(fifa_single, k = 6)
+hist(memb_single)
+
+memb_complete <- cutree(fifa_complete, k = 6)
+hist(memb_complete)
+
+memb_ward.D <- cutree(fifa_ward.D, k = 6)
+hist(memb_ward.D)
+
+memb_centroid <- cutree(fifa_centroid, k = 6)
+hist(memb_centroid)
+
+memb_median <- cutree(fifa_median, k = 6)
+hist(memb_median)
+
+memb_average <- cutree(fifa_average, k = 6)
+hist(memb_average)
+```
+
+
+```{r Hierarchical Clustering: ward.D}
+# Apply cutree() to fifa_ward.D: cut_ward.D
+cut_ward.D <- cutree(fifa_ward.D,  k=6)
+
+# Apply plot() on fifa_ward.D to draw the dendrogram
+plot(fifa_ward.D)
+
+# Apply rect.hclust() on fifa_ward.D to draw the boxes
+rect.hclust(fifa_ward.D,k=6,border = 2:6)
+
+#produce cluster labels (new variables) for all your observations using K-means
+#list_cut_ward.D <- list(cat(cut_ward.D))
+
+
+aggregate(fifa_c1.norm[,-8], by=list(cut_ward.D), FUN =mean)
+fifa_c1.norm3 = data.frame(fifa_c1.norm2, cut_ward.D)
+colnames(fifa_c1.norm3)[colnames(fifa_c1.norm3)== c("fifa_km.cluster","cut_ward.D")] <- c("HierCluster","KMeansCluster")
+
+
+# Comparing K-means and ward.D hierarchical clustering using Dunn index (same number of clusters, k=6)
+library(cluster)
+library(clValid)
+# Dunn's index for k-means: dunn_km
+dunn_km <- dunn(clusters=fifa_km$cluster,method = "euclidean",Data=fifa_c1.norm)
+
+# Dunn's index for ward.D: dunn_ward.D
+dunn_ward.D <- dunn(clusters=memb_ward.D,method = "euclidean",Data=fifa_c1.norm)
+
+table(dunn_km,dunn_ward.D)
+
+```
+
+```{r Hierarchical Clustering: Heatmap}
+#plot heatmap
+#subset the data to have better visualization
+sub <- sample(nrow(fifa_c1.norm), size = 50, replace = T)
+sub_fifa <- fifa_c1.norm[sub,-8]
+heatmap(as.matrix(sub_fifa[,-8]), Colv = NA, hclustfun = hclust, col = rev(paste("grey",1:99,sep = "")))
+
+#rev() reverses the color mapping to large = dark
+#heatmap(as.matrix(fifa_c1.norm), Colv = NA, hclustfun = hclust, col = rev(paste("grey",1:99,sep = "")))
+```
+
+```{r}
+set.seed(1)
+train.index <- sample(c(1:dim(fifa_c1.norm3)[1]), dim(fifa_c1.norm3)[1]*0.6)
+train.df.hr <- fifa_c1.norm3[train.index, ]
+valid.df.hr <- fifa_c1.norm3[-train.index, ]
+
+logit.nohr <- glm(formula = ST ~ Crossing + Finishing + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause + 
+    Crossing:HeadingAccuracy + Finishing:HeadingAccuracy,
+    family = "binomial", data = train.df.hr)
+summary(logit.nohr)
+logit.nohr.pred = predict(logit.nohr, valid.df.hr, type = 'response')
+confusionMatrix(as.factor(ifelse(logit.nohr$fitted.values>0.5,1,0)), as.factor(train.df.hr[,38])) #train
+confusionMatrix(as.factor(ifelse(logit.nohr.pred>0.5,1,0)), as.factor(valid.df.hr[,38]))
+
+logit.hr <- glm(formula = ST ~ Crossing + Finishing + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause + 
+    Crossing:HeadingAccuracy + Finishing:HeadingAccuracy + as.factor(HierCluster),
+    family = "binomial", data = train.df.hr)
+summary(logit.hr)
+
+logit.hr.pred = predict(logit.hr, valid.df.hr, type = 'response')
+confusionMatrix(as.factor(ifelse(logit.hr$fitted.values>0.5,1,0)), as.factor(train.df.hr[,38])) #train
+confusionMatrix(as.factor(ifelse(logit.hr.pred>0.5,1,0)), as.factor(valid.df.hr[,38]))
+```
+
+

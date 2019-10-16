@@ -1,0 +1,272 @@
+---
+title: "Project3 Classification"
+author: "Data Incubator"
+date: "3/14/2019"
+output:
+  word_document: default
+  html_document: default
+---
+```{r}
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(FNN)
+library(car)
+library(dplyr)
+library(MASS)
+library(ROSE)
+library(ROCR)
+
+
+fifa.df <- read.csv("FIFA19_3.7_original.csv")
+fifa.df <- fifa.df[ , c(16,19:48)]  # https://www.kaggle.com/manunew/classification-of-player-positions [input-18]
+
+# mutate new ST col for classification
+fifa.df$ST = ifelse(fifa.df$Position == 'ST',1,0)
+fifa.df$ST = factor(fifa.df$ST)
+fifa.df$Release.Clause = fifa.df$Release.Clause/228000000*100
+summary(fifa.df$Release.Clause)
+
+# balance the dataset
+fifa.df <- ovun.sample(ST ~ ., data = fifa.df, method = "both", p=0.5, N=4000, seed = 1)$data
+table(fifa.df$ST)
+
+fifa.df2 = fifa.df[,-c(1)] # no position
+
+# partition
+set.seed(1)
+train.index <- sample(c(1:dim(fifa.df2)[1]), dim(fifa.df2)[1]*0.6)
+train.df <- fifa.df2[train.index, ]
+valid.df <- fifa.df2[-train.index, ]
+```
+
+#1. Logistic Regression
+
+```{r logistic regression}
+#logit.reg <- glm(ST ~ ., data = train.df, family = "binomial")%>% stepAIC(trace = FALSE)
+options(scipen=999)
+logit.reg <- glm(formula = ST ~ Crossing + Finishing + HeadingAccuracy + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause, family = "binomial", 
+    data = train.df)
+summary(logit.reg)
+
+log.model.pred1 = predict(logit.reg, valid.df[,-31], type = 'response')
+data.frame(actual = valid.df$ST[1:5], predicted = log.model.pred1[1:5])
+
+confusionMatrix(as.factor(ifelse(logit.reg$fitted.values>0.5,1,0)), train.df[,31]) #train
+confusionMatrix(as.factor(ifelse(log.model.pred1>0.5,1,0)), valid.df[,31]) # valid
+# Out of sample accuracy is 0.9388   
+
+
+par(mfrow=c(2,2))
+plot(logit.reg)
+```
+
+
+```{r interaction terms}
+# Consider all potential interaction term
+# logit.reg1 <- glm(ST ~ Crossing + Finishing + HeadingAccuracy + ShortPassing + 
+#     Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause, data = train.df, family = "binomial") %>% stepAIC(trace = FALSE,scope=list(upper = ~Crossing*Finishing*HeadingAccuracy*ShortPassing*Volleys*BallControl*Strength*Marking*StandingTackle*Release.Clause, lower = ~1))
+
+# After considering the significance of different interaction terms, we keep following ones
+logit.reg1 <- glm(formula = ST ~ Crossing + Finishing + HeadingAccuracy + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause + 
+    Crossing:HeadingAccuracy + Finishing:HeadingAccuracy, 
+    family = "binomial", data = train.df)
+summary(logit.reg1)
+log.model.pred1 = predict(logit.reg1, valid.df[,-31], type = 'response')
+data.frame(actual = valid.df$ST[1:5], predicted = log.model.pred1[1:5])
+
+confusionMatrix(as.factor(ifelse(logit.reg1$fitted.values>0.5,1,0)), train.df[,31]) #train
+confusionMatrix(as.factor(ifelse(log.model.pred1>0.5,1,0)), valid.df[,31])
+# Out of sample accuracy is 0.9394   
+
+# coefficient for headingaccurcy is not significant, rebuild model without headingaccuracy
+logit.reg1.update <- glm(formula = ST ~ Crossing + Finishing + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause + 
+    Crossing:HeadingAccuracy + Finishing:HeadingAccuracy, 
+    family = "binomial", data = train.df)
+summary(logit.reg1.update)
+
+log.model.pred1.upadte = predict(logit.reg1.update, valid.df[,-31], type = 'response')
+data.frame(actual = valid.df$ST[1:5], predicted = log.model.pred1.upadte[1:5])
+
+confusionMatrix(as.factor(ifelse(logit.reg1.update$fitted.values>0.5,1,0)), train.df[,31]) #train
+confusionMatrix(as.factor(ifelse(log.model.pred1.upadte>0.5,1,0)), valid.df[,31])
+
+
+# It seems the out-of-sample accuracy has been improved. Therefore, we decide to add interaction terms of Crossing*HeadingAccuracy and Finishing*HeadingAccuracyto the model.
+```
+
+
+```{r}
+#After considering the significance of all potential quadratic polynomials:
+
+# logit.reg2 <-glm(formula = ST ~ poly(Crossing,2)+ poly(Finishing,2)+ poly(HeadingAccuracy,2)+poly(ShortPassing,2) +poly(Volleys,2)+ poly(BallControl,2)+poly(Strength,2) +poly(Marking,2)+poly(StandingTackle,2) +poly(Release.Clause,2), family = "binomial",
+#     data = train.df) %>% stepAIC(trace = FALSE)
+
+# logit.reg2 <-glm(formula = ST ~ poly(Crossing,2)+ poly(Finishing,2)+ poly(HeadingAccuracy,2)+poly(ShortPassing,2) +Volleys+BallControl+Strength +Marking+poly(StandingTackle,2) +poly(Release.Clause,2), family = "binomial",
+#     data = train.df) %>% stepAIC(trace = FALSE)
+# logit.reg2 <-glm(formula = ST ~ Crossing+ poly(Finishing,2)+ poly(HeadingAccuracy,2)+ShortPassing +Volleys+BallControl+Strength +Marking+poly(StandingTackle,2) +poly(Release.Clause,2), family = "binomial",
+#     data = train.df) %>% stepAIC(trace = FALSE)
+
+logit.reg2 <-glm(formula = ST ~ Crossing+ Finishing+ poly(HeadingAccuracy,2)+ShortPassing +Volleys+BallControl+Strength +Marking+poly(StandingTackle,2) +poly(Release.Clause,2), family = "binomial", data = train.df) %>% stepAIC(trace = FALSE)
+
+
+summary(logit.reg2)
+log.model.pred1 = predict(logit.reg2, valid.df[,-31], type = 'response')
+data.frame(actual = valid.df$ST[1:5], predicted = log.model.pred1[1:5])
+
+confusionMatrix(as.factor(ifelse(logit.reg2$fitted.values>0.5,1,0)), train.df[,31]) #train
+confusionMatrix(as.factor(ifelse(log.model.pred1>0.5,1,0)), valid.df[,31])
+# Out of sample accuracy is 0.9356      
+
+# It seems that adding quadratic terms can increase the in-sample accuracy for a bit, but will harm the out-of-sample accuracy. Therefore, we decide not to add any polynomial terms to the model.
+```
+
+
+```{r remove outlier}
+# identify outliers
+outlierTest(logit.reg1.update)
+influencePlot(logit.reg1.update, col = "blue")
+
+# rebuild model
+logit.reg.new <- update(logit.reg1.update, subset = c(-2512,-1176,-263,-3501,-808))
+data.frame(summary(logit.reg.new)$coefficients, odds = exp(coef(logit.reg.new))) 
+
+log.model.newpred <- predict(logit.reg.new, valid.df[,-31], type = 'response')
+summary(logit.reg.new)
+
+confusionMatrix(as.factor(ifelse(logit.reg.new$fitted.values>0.5,1,0)), train.df[c(-2512,-1176,-263,-3501,-808),31]) 
+confusionMatrix(as.factor(ifelse(log.model.newpred>0.5,1,0)), valid.df[,31])
+# Out of sample accuracy is 0.9394   
+
+
+```
+
+#2. K-nearest Neighbor
+
+```{r KNN}
+#library(class)
+set.seed(1)
+range <- 1:20
+accs <- rep(0, length(range))
+
+for (k in range) {
+  pred <- knn(train = train.df[,-31], test = valid.df[,-31],
+          cl = train.df[, 31], k = k)
+  conf <- table(pred,valid.df[, 31])
+  accs[k] <- sum(diag(conf))/sum(conf)
+}
+
+# Plot the accuracies. Title of x-axis is "k".
+plot(range, accs, xlab = "k")
+grid()
+
+# Find the best k:   k = 13
+which.max(accs)
+
+# Build KNN with K = 13.
+nn <- knn(train = train.df[,-31], test = valid.df[,-31],
+          cl = train.df[, 31], k = which.max(accs))
+confusionMatrix(nn,valid.df[, 31])
+```
+
+```{r KNN - interaction/poly terms}
+## To be consistent with the logistic regression model, we use terms that are significant :
+# Crossing:HeadingAccuracy + Finishing:HeadingAccuracy
+
+# Generate interaction and poly terms
+fifa.df.knn = fifa.df[, -1]
+fifa.df.knn$Crossing.HeadingAccuracy = fifa.df$Crossing * fifa.df$HeadingAccuracy
+fifa.df.knn$Finishing.HeadingAccuracy = fifa.df$Finishing * fifa.df$HeadingAccuracy
+fifa.df.knn$sqr.HeadingAccuracy = fifa.df$HeadingAccuracy ** 2
+fifa.df.knn$sqr.StandingTackle = fifa.df$StandingTackle ** 2
+
+# Scale interaction and poly terms to 100 scale
+fifa.df.knn$Crossing.HeadingAccuracy = fifa.df.knn$Crossing.HeadingAccuracy/max(fifa.df.knn$Crossing.HeadingAccuracy) * 100
+fifa.df.knn$Finishing.HeadingAccuracy = fifa.df.knn$Finishing.HeadingAccuracy/max(fifa.df.knn$Finishing.HeadingAccuracy) * 100
+fifa.df.knn$sqr.HeadingAccuracy = fifa.df.knn$sqr.HeadingAccuracy/max(fifa.df.knn$sqr.HeadingAccuracy) * 100
+fifa.df.knn$sqr.StandingTackle = fifa.df.knn$sqr.StandingTackle/max(fifa.df.knn$sqr.StandingTackle) * 100
+
+# partition KNN data
+set.seed(1)
+train.df.knn <- fifa.df.knn[train.index, ]
+valid.df.knn <- fifa.df.knn[-train.index, ]
+
+# Add only poly terms
+nn.2 = knn(train = train.df.knn[,-c(31,32,33)], test = valid.df.knn[,-c(31,32,33)],
+          cl = train.df.knn[, 31], k = which.max(accs))
+confusionMatrix(nn.2,valid.df.knn[, 31])
+
+# Add only interaction terms
+nn.3 = knn(train = train.df.knn[,-c(31,34,35)], test = valid.df.knn[,-c(31,34,35)],
+          cl = train.df.knn[, 31], k = which.max(accs))
+confusionMatrix(nn.3,valid.df.knn[, 31])
+
+# Add both poly and interaction terms
+nn.4 = nn.3 = knn(train = train.df.knn[,-c(31)], test = valid.df.knn[,-c(31)],
+          cl = train.df.knn[, 31], k = which.max(accs))
+confusionMatrix(nn.4,valid.df.knn[, 31])
+
+# Comparing with the accuracy of the KNN model without any additional terms, it seems like adding any additional terms could not further improve the accuracy. So we adopt the 'nn' model for the final result.
+```
+
+
+#3.Classification Tree
+
+```{r scale data for classification tree}
+#create polynomial terms and scale them
+fifa.df.ct = fifa.df2
+fifa.df.ct$sqr_heading = (fifa.df.ct$HeadingAccuracy)^2
+fifa.df.ct$sqr_heading = fifa.df.ct$sqr_heading/max(fifa.df.ct$sqr_heading) * 100
+fifa.df.ct$sqr_StandingTackle = (fifa.df.ct$StandingTackle)^2
+fifa.df.ct$sqr_StandingTackle = fifa.df.ct$sqr_StandingTackle/max(fifa.df.ct$sqr_StandingTackle) * 100
+fifa.df.ct$sqr_Release.Clause = (fifa.df.ct$Release.Clause)^2
+fifa.df.ct$sqr_Release.Clause = fifa.df.ct$sqr_Release.Clause/max(fifa.df.ct$sqr_Release.Clause) * 100
+
+# partition
+set.seed(1)
+train.index.ct <- sample(c(1:dim(fifa.df.ct)[1]), dim(fifa.df.ct)[1]*0.6)
+train.df.ct <- fifa.df.ct[train.index, ]
+valid.df.ct <- fifa.df.ct[-train.index, ]
+
+```
+
+
+```{r classification tree}
+#with all variables 
+fifa.ct <- rpart(ST ~ ., data = train.df.ct, control = rpart.control(maxdepth = 4), method = "class")
+# plot tree
+prp(fifa.ct, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10)
+
+ct.pred = predict(fifa.ct, valid.df.ct[, -31], type = 'class')
+confusionMatrix(ct.pred,valid.df.ct[, 31])
+
+```
+
+```{r classification tree: use significant variable only}
+#with siginificant variables only
+#variables shown significant in the logistic regression part
+fifa.ct.sig <- rpart(ST ~ Crossing + Finishing + HeadingAccuracy + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause, data = train.df.ct, control = rpart.control(maxdepth = 4), method = "class")
+# plot tree
+prp(fifa.ct.sig, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10)
+
+ct.pred.sig = predict(fifa.ct.sig, valid.df.ct[, -31], type = 'class')
+confusionMatrix(ct.pred.sig,valid.df.ct[, 31])
+```
+
+```{r classification tree: polynomial}
+#add polynomial terms
+fifa.ct.polynomial <- rpart(ST ~ Crossing + Finishing + HeadingAccuracy + ShortPassing + 
+    Volleys + BallControl + Strength + Marking + StandingTackle + Release.Clause + sqr_Release.Clause + sqr_StandingTackle + sqr_heading, data = train.df.ct, control = rpart.control(maxdepth = 4), method = "class")
+# plot tree
+prp(fifa.ct.polynomial, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10)
+
+ct.pred.polynomial = predict(fifa.ct.polynomial, valid.df.ct[, -31], type = 'class')
+confusionMatrix(ct.pred.polynomial,valid.df.ct[, 31])
+```
+
+
+
